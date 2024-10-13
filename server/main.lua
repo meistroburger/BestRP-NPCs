@@ -1,5 +1,7 @@
 ESX = nil
 
+location = nil
+
 Citizen.CreateThread(function()
     while ESX == nil do
         TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
@@ -14,22 +16,6 @@ end
 function error(source, msg)
     TriggerClientEvent('mythic_notify:client:SendAlert', source, { type = 'error', text = msg, length = 2500 })
 end
-
-RegisterNetEvent("weasel-npc:hasDrugs")
-AddEventHandler("weasel-npc:hasDrugs", function()
-    xPlayer = ESX.GetPlayerFromId(source)
-    if not xPlayer then return end
-    
-    for i,v in pairs(Config.Drugs) do
-        xItem = xPlayer.getInventoryItem(v[1])
-        if xItem and xItem.count >= 1 then
-            TriggerClientEvent("weasel-npc:setHasDrugs", _source, true)
-            break
-        else
-            TriggerClientEvent("weasel-npc:setHasDrugs", _source, false)
-        end
-    end
-end)
 
 RegisterNetEvent("weasel-npc:robNPCStart")
 AddEventHandler("weasel-npc:robNPCStart", function()
@@ -52,6 +38,7 @@ AddEventHandler("weasel-npc:robNPC", function()
     success(_source, "You robbed the poor local")
     local cash = math.random(Config.RobCash[1],Config.RobCash[2])
     xPlayer.addMoney(cash)
+    TriggerEvent("weasel-analytics:logTransaction", 'money', cash, xPlayer.getName(), "Robbed NPC")
     
     for i,v in pairs(Config.Items) do
         local itemsRandom = math.random(1,100)
@@ -67,7 +54,7 @@ AddEventHandler("weasel-npc:robNPC", function()
 end)
 
 RegisterNetEvent("weasel-npc:sellDrug")
-AddEventHandler("weasel-npc:sellDrug", function()
+AddEventHandler("weasel-npc:sellDrug", function(isClose)
     local _source = source
     local xPlayer = ESX.GetPlayerFromId(_source)
     local buyRandom = math.random(1,100)
@@ -78,7 +65,7 @@ AddEventHandler("weasel-npc:sellDrug", function()
             xItem = xPlayer.getInventoryItem(v[1])
             if xItem and xItem.count >= 1 then
                 drug = xItem
-                drugPrice = v[2]
+                drugPrice = math.random(v[2], v[3])
                 break
             end
         end
@@ -93,12 +80,14 @@ AddEventHandler("weasel-npc:sellDrug", function()
         else
             MaxCanBuy = Config.MaxCanBuy
         end
-
+        if isClose then
+            drugPrice = drugPrice * Config.DrugHotspotMultiplier
+        end
         local amountRandom = math.random(1, MaxCanBuy)
         success(_source, "They bought "..amountRandom.. " "..drug.label)
         xPlayer.removeInventoryItem(drug.name, amountRandom)
         xPlayer.addMoney(drugPrice * amountRandom)
-        TriggerEvent("weasel-npc:hasDrugs")
+        TriggerEvent("weasel-analytics:logTransaction", 'money', drugPrice * amountRandom, xPlayer.getName(), "Drug Sale: "..drug.label)
     else
         error(_source, "They have declined")
         local copRandom = math.random(1,100)
@@ -112,3 +101,15 @@ AddEventHandler("weasel-npc:sellDrug", function()
     TriggerClientEvent("weasel-npc:startCooldown", _source, "drug")
 end)
 
+Citizen.CreateThread(function()
+    while true do
+        location = math.random(1,#Config.DrugHotspots)
+        TriggerClientEvent("weasel-npc:hotspotChange", -1, location)
+        Citizen.Wait(Config.DrugHotspotSwapTime * 60000)
+    end
+end)
+
+RegisterNetEvent("weasel-npc:getLocation")
+AddEventHandler("weasel-npc:getLocation", function()
+    TriggerClientEvent("weasel-npc:pullLocation", -1, location)
+end)

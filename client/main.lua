@@ -5,22 +5,73 @@ robbing = false
 
 sellingCooldown = false
 robbingCooldown = false
+PlayerLoaded = false
+hotspotLocation = nil
+blip = nil
 
 
-Citizen.CreateThread(function()
-    while ESX == nil do
-        Wait(0)
-        TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
-    end
+TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
+
+RegisterNetEvent('esx:playerLoaded')
+AddEventHandler('esx:playerLoaded', function(xPlayer)
+	ESX.PlayerData = xPlayer
+	Citizen.Wait(1000)
+    TriggerServerEvent("weasel-npc:getLocation")
+	StartResource()
 end)
 
+StartResource = function()
+	Citizen.CreateThread(function()
+		Citizen.Wait(8000)
+		PlayerLoaded = true
+		StartLoop()
+	end)
+end
+
+RegisterNetEvent("weasel-npc:pullLocation")
+AddEventHandler("weasel-npc:pullLocation", function(a)
+    hotspotLocation = a
+    setLocation(a)
+end)
+
+local function has_value (tab, val)
+    for index, value in ipairs(tab) do
+        if value[1] == val then
+            return true
+        end
+    end
+
+    return false
+end
+
+StartLoop = function()
+	Citizen.CreateThread(function()
+		while PlayerLoaded do
+			Wait(Config.UpdateTime)
+			ESX.PlayerData.inventory = ESX.GetPlayerData().inventory
+            hasDrugs = false
+            for k, v in pairs(ESX.PlayerData.inventory) do
+				if has_value(Config.Drugs, v.name) then
+                    hasDrugs = true
+                    break
+                end
+			end
+        end
+    end)
+end
+
+if ESX.IsPlayerLoaded() then 
+    TriggerServerEvent("weasel-npc:getLocation")
+    StartResource()
+ end
 
 
 Citizen.CreateThread(function()
 
     while true do
         Wait(0)
-        if hasDrugs and not selling and not sellingCooldown then
+        local isArmed = IsPedArmed(GetPlayerPed(-1), 7) and IsPedArmed(GetPlayerPed(-1), 4)
+        if hasDrugs and not selling and not sellingCooldown and not isArmed then
             
             local player = GetPlayerPed(-1)
             local playerPos = GetEntityCoords(player)
@@ -43,27 +94,15 @@ Citizen.CreateThread(function()
     end
 end)
 
-
-RegisterNetEvent('esx:playerLoaded')
-AddEventHandler('esx:playerLoaded', function(playerData)
-    Citizen.CreateThread(function()
-        while true do
-            Citizen.Wait(Config.UpdateTime)
-            TriggerServerEvent("weasel-npc:hasDrugs")
-        end
-    end)
-end)
-
-
-
 Citizen.CreateThread(function() -- Creates thread
-
+    
     local lastPed = nil
 	while Config.EnableRobNPC do
 		Wait(0)
-        if not robbing then
+        local isArmed = IsPedArmed(GetPlayerPed(-1), 7) and IsPedArmed(GetPlayerPed(-1), 4)
+        if not robbing and isArmed then
             local aiming, ped = GetEntityPlayerIsFreeAimingAt(PlayerId(-1))
-            if aiming then
+            if aiming and not IsPedArmed(ped, 7) then
                 if not IsPedInAnyVehicle(GetPlayerPed(-1)) and DoesEntityExist(ped) and not IsPedDeadOrDying(ped) and IsPedHuman(ped) and not IsPedAPlayer(ped) then
                     nearPedRob(ped)
                     lastPed = ped
@@ -75,10 +114,19 @@ Citizen.CreateThread(function() -- Creates thread
 	end
 end)
 
-RegisterNetEvent("weasel-npc:setHasDrugs")
-AddEventHandler("weasel-npc:setHasDrugs", function(drugs)
-    hasDrugs = drugs
+RegisterNetEvent("weasel-npc:hotspotChange")
+AddEventHandler("weasel-npc:hotspotChange", function(i)
+    setLocation(i)
 end)
+
+setLocation = function(i)
+    RemoveBlip(blip)
+    blip = AddBlipForRadius(Config.DrugHotspots[i].x, Config.DrugHotspots[i].y, Config.DrugHotspots[i].z, Config.DrugHotspotRadius)
+    hotspotLocation = Config.DrugHotspots[i]
+    SetBlipSprite(blip,148)
+    SetBlipColour(blip,2)
+    SetBlipAlpha(blip,80)
+end
 
 RegisterNetEvent("weasel-npc:startCooldown")
 AddEventHandler("weasel-npc:startCooldown", function(type)
@@ -146,7 +194,7 @@ end
 
 function nearPedDrugs(ped, npcPos)
     local textLoc = vector3(npcPos.x, npcPos.y, npcPos.z+0.2)
-    
+    local playerPos = GetEntityCoords(GetPlayerPed(-1))
     ESX.Game.Utils.DrawText3D(textLoc, "Press [~g~E~w~] to sell drugs")
     if IsControlJustReleased(0, 153) then
         if sellingCooldown then
@@ -156,7 +204,6 @@ function nearPedDrugs(ped, npcPos)
         selling = true
         SetEntityAsMissionEntity(ped)
         TaskStandStill(ped, Config.TransactionTime)
-        exports['mythic_notify']:SendAlert('success', 'Press E to Cancel')
         TriggerEvent("mythic_progbar:client:progress", {
             name = "attempt_sell_drugs",
             duration = Config.TransactionTime,
@@ -174,12 +221,15 @@ function nearPedDrugs(ped, npcPos)
                 anim = "idle_a",
             }
         }, function(status)
-            if not status then
-                TriggerServerEvent("weasel-npc:sellDrug")
+            if not status and hotspotLocation == nil then
+                TriggerServerEvent("weasel-npc:sellDrug", false)
+            elseif not status and #(playerPos-hotspotLocation) <= Config.DrugHotspotRadius then
+                TriggerServerEvent("weasel-npc:sellDrug", true)
+            elseif not status then
+                TriggerServerEvent("weasel-npc:sellDrug", false)
             end
             selling = false
             SetPedAsNoLongerNeeded(ped)
         end)
     end
 end
-
